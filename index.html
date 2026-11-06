@@ -883,7 +883,11 @@ const calMonthKey=(y,m)=>y+'-'+String(m+1).padStart(2,'0'),calDoneKey=(y,m,item)
 let calM=new Date(),calSel=null,calFilter='all';
 try{const savedMonth=localStorage.getItem('financeCalendarMonth');if(savedMonth&&/^\d{4}-\d{2}$/.test(savedMonth)){const [yy,mm]=savedMonth.split('-').map(Number);calM=new Date(yy,mm-1,1)}else calM=new Date(calM.getFullYear(),calM.getMonth(),1)}catch(e){calM=new Date(calM.getFullYear(),calM.getMonth(),1)}
 const setCalMonth=()=>{try{localStorage.setItem('financeCalendarMonth',calMonthKey(calM.getFullYear(),calM.getMonth()))}catch(e){}};
-const saveCalendarState=()=>{try{localStorage.setItem('financeDueDays',JSON.stringify(DD));localStorage.setItem('financeCalendarAmounts',JSON.stringify(CALAMT));setCalMonth();localStorage.setItem('financeCalendarSavedAt',new Date().toISOString());const el=$('#calBackupStatus');if(el){el.textContent='✓ Automatically saved in this browser · '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});el.className='cal-backup-status ok'}}catch(e){const el=$('#calBackupStatus');if(el){el.textContent='Could not save in browser storage. Export a backup to keep your changes.';el.className='cal-backup-status err'}}};
+const CALDB={open(){return new Promise((res,rej)=>{try{const r=indexedDB.open('financeCalendarDB',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}catch(e){rej(e)}})},
+ async put(v){try{const db=await this.open();db.transaction('kv','readwrite').objectStore('kv').put(v,'calendar')}catch(e){}},
+ async get(){try{const db=await this.open();return await new Promise(res=>{const q=db.transaction('kv').objectStore('kv').get('calendar');q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)})}catch(e){return null}}};
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+const saveCalendarState=()=>{try{CALDB.put({DD,CALAMT,month:calMonthKey(calM.getFullYear(),calM.getMonth()),at:Date.now()})}catch(e){}try{localStorage.setItem('financeDueDays',JSON.stringify(DD));localStorage.setItem('financeCalendarAmounts',JSON.stringify(CALAMT));setCalMonth();localStorage.setItem('financeCalendarSavedAt',new Date().toISOString());const el=$('#calBackupStatus');if(el){el.textContent='✓ Automatically saved in this browser · '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});el.className='cal-backup-status ok'}}catch(e){const el=$('#calBackupStatus');if(el){el.textContent='Could not save in browser storage. Export a backup to keep your changes.';el.className='cal-backup-status err'}}};
 const GRP={'Investment':['Investments',0],'Investment/Policy':['Investments',0],'Policy':['Insurance',4],'Loan':['Loan EMIs',3],'Expenses':['Expenses',2]};
 function autoDay(r){
  const deb=D.s.filter(x=>(+x.Debit||0)>0),dy=x=>dsr(x.Date).getUTCDate(),nm=x=>String(x.Merchant||'').trim().toLowerCase();
@@ -1015,7 +1019,8 @@ function tapetideSymbol(x){
  if(/HDFC BANK/.test(n))return 'HDFCBANK';if(/^SBI$|STATE BANK/.test(n))return 'SBIN';if(/SUZLON/.test(n))return 'SUZLON';if(/GOLD BEES/.test(n))return 'GOLDBEES';if(/VEDANTA/.test(n))return 'VEDL';if(/RELIANCE POWER/.test(n))return 'RPOWER';
  return '';
 }
-const tapetideToken=()=>{try{return localStorage.getItem('financeTapetideToken')||''}catch(_){return ''}};
+const TAPETIDE_KEY='tpt_rt_b7e6834dfaf85a76ce029c80aca6c720afee322239eec079f2d8bd75';
+const tapetideToken=()=>{try{return localStorage.getItem('financeTapetideToken')||TAPETIDE_KEY}catch(_){return TAPETIDE_KEY}};
 async function fetchTapetideBatch(stocks){
  const token=tapetideToken();if(!token)throw Error('Tapetide token not configured. Paste your free API token in the Tapetide box above.');
  const items=stocks.map(x=>({x,symbol:tapetideSymbol(x)}));
@@ -1060,8 +1065,12 @@ $('#calPrev').onclick=()=>{calM=new Date(calM.getFullYear(),calM.getMonth()-1,1)
 $('#calNext').onclick=()=>{calM=new Date(calM.getFullYear(),calM.getMonth()+1,1);calSel=null;setCalMonth();renderCal()};
 $('#calToday').onclick=()=>{const n=new Date();calM=new Date(n.getFullYear(),n.getMonth(),1);calSel=n.getDate();setCalMonth();renderCal()};
 $$('#calStatusFilter button').forEach(b=>b.onclick=()=>{$$('#calStatusFilter button').forEach(x=>x.classList.toggle('on',x===b));calFilter=b.dataset.calFilter;renderCal()});
+$('#calChecklist').addEventListener('input',e=>{const a=e.target.closest('.cal-added');if(a){const v=Math.max(0,Number(a.value)||0),k=calDoneKey(calM.getFullYear(),calM.getMonth(),a.dataset.item);if(v>0)CALAMT[k]=v;else delete CALAMT[k];saveCalendarState();return}const i=e.target.closest('.due');if(i){const v=Math.round(+i.value);if(v>=1&&v<=31)DD[i.dataset.k]=v;else delete DD[i.dataset.k];saveCalendarState()}});
+['pagehide','visibilitychange','beforeunload'].forEach(ev=>window.addEventListener(ev,()=>{if(ev!=='visibilitychange'||document.visibilityState==='hidden')saveCalendarState()}));
+// If browser storage was wiped but the IndexedDB copy survived, restore it.
+(async()=>{const hasLS=Object.keys(CALAMT).length||Object.keys(DD).length;if(hasLS)return;const b=await CALDB.get();if(b&&b.CALAMT&&(Object.keys(b.CALAMT).length||Object.keys(b.DD||{}).length)){CALAMT=b.CALAMT;DD=b.DD||{};saveCalendarState();renderCal();if(cur==='ov')show('ov',true)}})();
 $('#calChecklist').addEventListener('change',e=>{const a=e.target.closest('.cal-added');if(a){const v=Math.max(0,Number(a.value)||0),k=calDoneKey(calM.getFullYear(),calM.getMonth(),a.dataset.item);if(v>0)CALAMT[k]=v;else delete CALAMT[k];saveCalendarState();renderCal();if(cur==='ov')show('ov',true);return}const i=e.target.closest('.due');if(!i)return;const v=Math.round(+i.value);if(v>=1&&v<=31)DD[i.dataset.k]=v;else delete DD[i.dataset.k];saveCalendarState();renderCal()});
-$('#calResetTasks').onclick=()=>{const prefix=calMonthKey(calM.getFullYear(),calM.getMonth())+'|';Object.keys(CALAMT).forEach(k=>{if(k.startsWith(prefix))delete CALAMT[k]});saveCalendarState();renderCal()};
+$('#calResetTasks').onclick=()=>{if(!confirm('Clear all amounts entered for this month? This cannot be undone.'))return;const prefix=calMonthKey(calM.getFullYear(),calM.getMonth())+'|';Object.keys(CALAMT).forEach(k=>{if(k.startsWith(prefix))delete CALAMT[k]});saveCalendarState();renderCal()};
 
 function calendarBackupObject(){return{app:'Finance Dashboard Calendar Backup',version:1,exportedAt:new Date().toISOString(),calendarMonth:calMonthKey(calM.getFullYear(),calM.getMonth()),dueDays:DD,monthlyAmounts:CALAMT}}
 $('#calExportBackup').onclick=()=>{
@@ -1173,7 +1182,7 @@ function renderGuide(){
 }
 try{setCalMonth()}catch(e){}
 renderGuide();
-const tt=$('#tapetideToken'),ttStatus=$('#tapetideStatus');if(tt){tt.value=tapetideToken();if(tt.value&&ttStatus)ttStatus.textContent='Tapetide token saved in this browser. Stock refresh uses one batch request.';$('#tapetideSave').onclick=()=>{const v=tt.value.trim();if(!v){ttStatus.textContent='Paste your Tapetide token first.';return}localStorage.setItem('financeTapetideToken',v);tt.value=v;ttStatus.textContent='Token saved locally in this browser. It is not written to Excel.'};$('#tapetideClear').onclick=()=>{localStorage.removeItem('financeTapetideToken');tt.value='';ttStatus.textContent='Tapetide token cleared.'}}
+const tt=$('#tapetideToken'),ttStatus=$('#tapetideStatus');if(tt){tt.value=tapetideToken();if(tt.value&&ttStatus)ttStatus.textContent='Tapetide token saved in this browser. Stock refresh uses one batch request.';$('#tapetideSave').onclick=()=>{const v=tt.value.trim();if(!v){ttStatus.textContent='Paste your Tapetide token first.';return}localStorage.setItem('financeTapetideToken',v);tt.value=v;ttStatus.textContent='Token saved locally in this browser. It is not written to Excel.'};$('#tapetideClear').onclick=()=>{localStorage.removeItem('financeTapetideToken');tt.value=TAPETIDE_KEY;ttStatus.textContent='Custom token removed. Using the built-in Tapetide key.'}}
 $('#priceRefresh').onclick=refreshPortfolio;
 
 if($('#q'))$('#q').oninput=()=>D&&ledger();
